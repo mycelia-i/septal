@@ -3,8 +3,13 @@ KKT residual computation and convergence check for the SQP solver.
 
 Convergence is declared when both:
 
-    ‖∇f(x,p) + J_g(x,p)ᵀ λ‖_∞  ≤  ε_stat   (stationarity)
-    max(max(g-rhs, 0), max(lhs-g, 0))_∞      ≤  ε_feas   (primal feasibility)
+    ‖proj_{[lb,ub]}(x - ∇_xL) - x‖_∞  ≤  ε_stat   (stationarity, projected gradient)
+    max(max(g-rhs, 0), max(lhs-g, 0))_∞             ≤  ε_feas   (primal feasibility)
+
+The projected-gradient form of stationarity correctly handles active box
+constraints: when x[i]=lb[i] the Lagrangian gradient may be positive (pointing
+into the feasible region), which is NOT a KKT violation.  Using the raw
+‖∇_xL‖_∞ would incorrectly flag such iterates as non-stationary.
 """
 
 from __future__ import annotations
@@ -26,6 +31,8 @@ def kkt_residuals(
     constraint_lhs: Optional[jnp.ndarray],
     constraint_rhs: Optional[jnp.ndarray],
     n_g: int,
+    lb: Optional[jnp.ndarray] = None,
+    ub: Optional[jnp.ndarray] = None,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Compute KKT stationarity and primal feasibility residuals.
 
@@ -45,11 +52,16 @@ def kkt_residuals(
         Constraint bounds, each of shape ``(n_g,)`` or ``None``.
     n_g:
         Number of general constraints.
+    lb, ub:
+        Decision-variable bounds, each shape ``(n,)``.  When provided, the
+        stationarity metric uses the projected-gradient residual
+        ``‖proj_{[lb,ub]}(x - ∇_xL) - x‖_∞`` which correctly handles active
+        box constraints.  Pass ``None`` to fall back to ``‖∇_xL‖_∞``.
 
     Returns
     -------
     stationarity : jnp.ndarray
-        Scalar ``‖∇_x L(x, λ, p)‖_∞``.
+        Scalar projected-gradient (or raw) stationarity residual.
     feasibility : jnp.ndarray
         Scalar constraint violation in the L∞ norm.
     """
@@ -70,7 +82,14 @@ def kkt_residuals(
         grad_lag = grad_f
         feas = jnp.zeros(())
 
-    stationarity = jnp.max(jnp.abs(grad_lag))
+    if lb is not None and ub is not None:
+        # Projected-gradient stationarity: accounts for active box constraints.
+        # At a KKT point x* with active lb[i]: grad_lag[i] >= 0 is not a violation.
+        # proj(x - grad_lag, lb, ub) - x collapses to 0 in that case.
+        proj_grad = jnp.clip(x - grad_lag, lb, ub) - x
+        stationarity = jnp.max(jnp.abs(proj_grad))
+    else:
+        stationarity = jnp.max(jnp.abs(grad_lag))
     return stationarity, feas
 
 

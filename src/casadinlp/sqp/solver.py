@@ -27,7 +27,7 @@ import jax
 import jax.numpy as jnp
 
 from casadinlp.sqp.schema import ParametricNLPProblem, SQPConfig, SQPResult, SQPState
-from casadinlp.sqp.convergence import is_converged, kkt_residuals
+from casadinlp.sqp.convergence import is_converged
 from casadinlp.sqp.hessian import bfgs_update, lagrangian_grad
 from casadinlp.sqp.line_search import (
     backtracking_line_search,
@@ -82,11 +82,22 @@ def init_sqp_state(
     g0 = problem.constraints(x0, p).reshape(n_g) if n_g > 0 and problem.constraints is not None else jnp.zeros(0)
 
     merit0 = l1_merit(f0, g0, lhs, rhs, jnp.array(cfg.penalty_init), n_g)
-    stat0, feas0 = kkt_residuals(
-        x0, lam0, p,
-        problem.objective, problem.constraints,
-        problem.constraint_lhs, problem.constraint_rhs, n_g,
-    )
+    lb_arr = jnp.asarray(problem.lb).reshape(n)
+    ub_arr = jnp.asarray(problem.ub).reshape(n)
+
+    # Dual-free initial stationarity: projected gradient of f onto [lb, ub].
+    # Consistent with the QP-step stationarity used in make_sqp_step.
+    grad_f0 = jax.grad(problem.objective)(x0, p)
+    stat0 = jnp.max(jnp.abs(jnp.clip(x0 - grad_f0, lb_arr, ub_arr) - x0))
+
+    # Initial feasibility
+    if n_g > 0 and problem.constraints is not None:
+        feas0 = jnp.maximum(
+            jnp.max(jnp.maximum(g0 - rhs, 0.0)),
+            jnp.max(jnp.maximum(lhs - g0, 0.0)),
+        )
+    else:
+        feas0 = jnp.zeros(())
 
     return SQPState(
         x=x0,
@@ -180,12 +191,17 @@ def make_sqp_step(
         y = grad_lag_new - state.grad_lag
         H_new = bfgs_update(state.hessian, s, y, cfg.bfgs_skip_tol)
 
-        # 9. KKT residuals and convergence
-        stat_new, feas_new = kkt_residuals(
-            x_new, lam_new, p,
-            problem.objective, problem.constraints,
-            problem.constraint_lhs, problem.constraint_rhs, n_g,
-        )
+        # 9. Stationarity: use QP-step norm ‖d‖_∞ (dual-free).
+        #    At a KKT point the QP yields d=0 regardless of multiplier accuracy.
+        #    Feasibility is computed from the already-evaluated g_new.
+        stat_new = jnp.max(jnp.abs(d))
+        if n_g > 0:
+            feas_new = jnp.maximum(
+                jnp.max(jnp.maximum(g_new - rhs, 0.0)),
+                jnp.max(jnp.maximum(lhs - g_new, 0.0)),
+            )
+        else:
+            feas_new = jnp.zeros(())
         conv_new = is_converged(stat_new, feas_new, cfg)
 
         return SQPState(
