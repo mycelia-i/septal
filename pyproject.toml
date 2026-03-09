@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "casadinlp"
+name = "septal"
 version = "0.1.0"
-description = "JAX-CasADi NLP solver library with standard problem schema"
+description = "Nonlinear programming with JAX and CasADi"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

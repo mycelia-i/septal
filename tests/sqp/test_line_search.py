@@ -1,11 +1,11 @@
-"""Tests for casadinlp.sqp.line_search."""
+"""Tests for septal.jax.sqp.line_search."""
 
 import pytest
 import jax
 import jax.numpy as jnp
 
-from casadinlp.sqp.schema import SQPConfig
-from casadinlp.sqp.line_search import (
+from septal.jax.sqp.schema import SQPConfig
+from septal.jax.sqp.line_search import (
     constraint_violation,
     l1_merit,
     merit_directional_deriv,

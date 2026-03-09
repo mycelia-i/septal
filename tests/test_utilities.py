@@ -1,9 +1,9 @@
-"""Tests for casadinlp.utilities."""
+"""Tests for septal.casadax.utilities."""
 
 import pytest
 import jax.numpy as jnp
 import numpy as np
-from casadinlp.utilities import generate_initial_guess, unpack_results, clean_up
+from septal.casadax.utilities import generate_initial_guess, unpack_results, clean_up
 
 
 class TestGenerateInitialGuess:

@@ -1,12 +1,12 @@
-"""Tests for casadinlp.sqp.qp_subproblem."""
+"""Tests for septal.jax.sqp.qp_subproblem."""
 
 import pytest
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from casadinlp.sqp.schema import SQPConfig
-from casadinlp.sqp.qp_subproblem import form_qp_matrices, solve_qp_subproblem
+from septal.jax.sqp.schema import SQPConfig
+from septal.jax.sqp.qp_subproblem import form_qp_matrices, solve_qp_subproblem
 
 
 @pytest.fixture

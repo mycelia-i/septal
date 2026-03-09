@@ -1,12 +1,12 @@
-"""Tests for casadinlp.sqp.factory.ParametricSQPFactory."""
+"""Tests for septal.jax.sqp.factory.ParametricSQPFactory."""
 
 import pytest
 import jax
 import jax.numpy as jnp
 
-from casadinlp.sqp.schema import ParametricNLPProblem, SQPConfig, SQPResult
-from casadinlp.sqp.factory import ParametricSQPFactory
-from casadinlp.schema import NLPProblem
+from septal.jax.sqp.schema import ParametricNLPProblem, SQPConfig, SQPResult
+from septal.jax.sqp.factory import ParametricSQPFactory
+from septal.casadax.schema import NLPProblem
 
 
 # ---------------------------------------------------------------------------

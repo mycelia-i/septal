@@ -1,12 +1,12 @@
-"""Tests for casadinlp.factory — SolverFactory."""
+"""Tests for septal.casadax.factory — SolverFactory."""
 
 import pytest
 import jax.numpy as jnp
 import numpy as np
-from casadinlp.factory import SolverFactory
-from casadinlp.schema import NLPProblem, SolveResult
-from casadinlp.callbacks import casadify_reverse
-from casadinlp.solvers import CasadiSolver, JaxSolver
+from septal.casadax.factory import SolverFactory
+from septal.casadax.schema import NLPProblem, SolveResult
+from septal.casadax.callbacks import casadify_reverse
+from septal.casadax.solvers import CasadiSolver, JaxSolver
 
 
 def _quadratic(x):

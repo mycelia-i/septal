@@ -1,10 +1,10 @@
-"""Tests for casadinlp.sqp.convergence."""
+"""Tests for septal.jax.sqp.convergence."""
 
 import pytest
 import jax.numpy as jnp
 
-from casadinlp.sqp.schema import SQPConfig
-from casadinlp.sqp.convergence import kkt_residuals, is_converged
+from septal.jax.sqp.schema import SQPConfig
+from septal.jax.sqp.convergence import kkt_residuals, is_converged
 
 
 def make_quadratic_problem():

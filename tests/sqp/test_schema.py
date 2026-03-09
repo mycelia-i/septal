@@ -1,9 +1,9 @@
-"""Tests for casadinlp.sqp.schema."""
+"""Tests for septal.jax.sqp.schema."""
 
 import pytest
 import jax.numpy as jnp
 
-from casadinlp.sqp.schema import ParametricNLPProblem, SQPConfig, SQPState, SQPResult
+from septal.jax.sqp.schema import ParametricNLPProblem, SQPConfig, SQPState, SQPResult
 
 
 class TestParametricNLPProblem:

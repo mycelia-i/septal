@@ -1,11 +1,11 @@
-"""Tests for casadinlp.sqp.hessian."""
+"""Tests for septal.jax.sqp.hessian."""
 
 import pytest
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from casadinlp.sqp.hessian import bfgs_update, lagrangian_grad
+from septal.jax.sqp.hessian import bfgs_update, lagrangian_grad
 
 
 class TestBFGSUpdate:

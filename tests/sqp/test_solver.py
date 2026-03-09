@@ -1,12 +1,12 @@
-"""Tests for casadinlp.sqp.solver."""
+"""Tests for septal.jax.sqp.solver."""
 
 import pytest
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from casadinlp.sqp.schema import ParametricNLPProblem, SQPConfig, SQPState
-from casadinlp.sqp.solver import (
+from septal.jax.sqp.schema import ParametricNLPProblem, SQPConfig, SQPState
+from septal.jax.sqp.solver import (
     init_sqp_state,
     sqp_solve_scan,
     sqp_solve_single,

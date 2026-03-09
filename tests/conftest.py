@@ -1,4 +1,4 @@
-"""Shared fixtures for casadinlp tests."""
+"""Shared fixtures for septal tests."""
 
 import pytest
 import jax.numpy as jnp

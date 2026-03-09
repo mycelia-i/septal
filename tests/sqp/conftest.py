@@ -1,9 +1,9 @@
-"""Shared fixtures for casadinlp.sqp tests."""
+"""Shared fixtures for septal.jax.sqp tests."""
 
 import pytest
 import jax.numpy as jnp
 
-from casadinlp.sqp.schema import ParametricNLPProblem, SQPConfig
+from septal.jax.sqp.schema import ParametricNLPProblem, SQPConfig
 
 
 # ---------------------------------------------------------------------------

@@ -1,11 +1,11 @@
-"""Tests for casadinlp.solvers — CasadiSolver and JaxSolver."""
+"""Tests for septal.casadax.solvers — CasadiSolver and JaxSolver."""
 
 import pytest
 import jax.numpy as jnp
 import numpy as np
-from casadinlp.callbacks import casadify_reverse, casadify_forward
-from casadinlp.solvers import CasadiSolver, JaxSolver
-from casadinlp.utilities import generate_initial_guess
+from septal.casadax.callbacks import casadify_reverse, casadify_forward
+from septal.casadax.solvers import CasadiSolver, JaxSolver
+from septal.casadax.utilities import generate_initial_guess
 
 
 # ---------------------------------------------------------------------------
@@ -31,7 +31,7 @@ class TestCasadiSolverUnconstrained:
         return solver, guesses
 
     def test_returns_solve_result(self, setup):
-        from casadinlp.schema import SolveResult
+        from septal.casadax.schema import SolveResult
         solver, guesses = setup
         result = solver.solve(guesses)
         assert isinstance(result, SolveResult)
@@ -115,7 +115,7 @@ class TestCasadiSolverEdgeCases:
         guesses = generate_initial_guess(1, n_d, [jnp.array([-0.5]), jnp.array([0.5])])
         result = solver.solve(guesses)
         # Whether or not IPOPT "succeeds", we get a SolveResult back
-        from casadinlp.schema import SolveResult
+        from septal.casadax.schema import SolveResult
         assert isinstance(result, SolveResult)
 
     def test_initial_guess_shape(self, solver_cfg):
@@ -155,7 +155,7 @@ class TestJaxSolver:
         return solver, guesses
 
     def test_returns_solve_result(self, setup):
-        from casadinlp.schema import SolveResult
+        from septal.casadax.schema import SolveResult
         solver, guesses = setup
         result = solver.solve(guesses)
         assert isinstance(result, SolveResult)
