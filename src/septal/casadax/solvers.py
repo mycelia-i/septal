@@ -5,7 +5,7 @@ Two backends are provided:
 
 CasadiSolver
     Multi-start IPOPT via CasADi. Accepts pre-built CasADi-compatible
-    objective and constraint callbacks (see :mod:`casadinlp.callbacks`).
+    objective and constraint callbacks (see :mod:`septal.casadax.callbacks`).
 
 JaxSolver
     Bound-constrained multi-start L-BFGS-B via JAXopt. No constraint support;
@@ -27,8 +27,8 @@ from casadi import MX, Function, nlpsol
 from jax import jacfwd, jit, lax
 from jaxopt import LBFGSB  # type: ignore[import-not-found]
 
-from casadinlp.schema import SolveResult
-from casadinlp.utilities import generate_initial_guess
+from septal.casadax.schema import SolveResult
+from septal.casadax.utilities import generate_initial_guess
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +142,7 @@ def _assess_lbfgsb_solution(
 
 
 class BaseSolver(ABC):
-    """Common interface for casadinlp solvers."""
+    """Common interface for septal solvers."""
 
     def __init__(self, cfg: Any) -> None:
         self.cfg = cfg
@@ -169,7 +169,7 @@ class CasadiSolver(BaseSolver):
     cfg:
         Config object with at least ``n_starts`` and ``max_solution_time``.
     objective_fn:
-        CasADi-compatible callable (e.g. produced by :func:`~casadinlp.callbacks.casadify_reverse`).
+        CasADi-compatible callable (e.g. produced by :func:`~septal.casadax.callbacks.casadify_reverse`).
     bounds:
         ``[lb, ub]`` arrays, each of shape ``(n_decision,)``.
     constraints_fn:

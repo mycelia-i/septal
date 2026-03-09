@@ -4,18 +4,18 @@ SolverFactory — creates the right solver backend from a configuration key.
 Supported solver types
 ----------------------
 ``"general_constrained_nlp"``
-    CasADi / IPOPT multi-start (via :class:`~casadinlp.solvers.CasadiSolver`).
+    CasADi / IPOPT multi-start (via :class:`~septal.casadax.solvers.CasadiSolver`).
 
 ``"box_constrained_nlp"``
-    JAXopt L-BFGS-B multi-start (via :class:`~casadinlp.solvers.JaxSolver`).
+    JAXopt L-BFGS-B multi-start (via :class:`~septal.casadax.solvers.JaxSolver`).
 """
 
 from __future__ import annotations
 
 from typing import Any, Callable, List, Optional
 
-from casadinlp.schema import NLPProblem, SolveResult
-from casadinlp.solvers import BaseSolver, CasadiSolver, JaxSolver
+from septal.casadax.schema import NLPProblem, SolveResult
+from septal.casadax.solvers import BaseSolver, CasadiSolver, JaxSolver
 
 
 class SolverFactory:
@@ -46,7 +46,7 @@ class SolverFactory:
 
     @classmethod
     def from_problem(cls, cfg: Any, solver_type: str, problem: NLPProblem) -> "SolverFactory":
-        """Build a factory and construct the solver from an :class:`~casadinlp.schema.NLPProblem`.
+        """Build a factory and construct the solver from an :class:`~septal.casadax.schema.NLPProblem`.
 
         Parameters
         ----------

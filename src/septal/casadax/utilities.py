@@ -1,5 +1,5 @@
 """
-General-purpose utilities for casadinlp.
+General-purpose utilities for septal.
 
 These are backend-agnostic helpers used by both solver implementations.
 """

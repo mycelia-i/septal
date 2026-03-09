@@ -1,5 +1,5 @@
 """
-casadinlp — JAX-CasADi NLP solver library.
+septal.casadax — CasADi/JAX NLP solver backends.
 
 Provides a standard schema for nonlinear programmes and two solver backends:
 
@@ -10,9 +10,9 @@ JAX functions are connected to CasADi via efficient AD callbacks
 (forward-mode ``jvp`` or reverse-mode ``vjp``) exported as
 ``casadify_forward`` / ``casadify_reverse`` / ``casadify``.
 
-Typical usage::
+Typical usage (IPOPT)::
 
-    from casadinlp import NLPProblem, SolverFactory, casadify_reverse
+    from septal.casadax import NLPProblem, SolverFactory, casadify_reverse
 
     objective_cb = casadify_reverse(my_jax_objective, n_d)
     problem = NLPProblem(objective=objective_cb, bounds=[lb, ub])
@@ -20,7 +20,7 @@ Typical usage::
     result = factory.solve(factory.initial_guess())
 """
 
-from casadinlp.callbacks import (
+from septal.casadax.callbacks import (
     JaxCasADiEvaluator,
     JaxCallbackForward,
     JaxCallbackReverse,
@@ -28,10 +28,10 @@ from casadinlp.callbacks import (
     casadify_forward,
     casadify_reverse,
 )
-from casadinlp.factory import SolverFactory
-from casadinlp.schema import NLPProblem, SolveResult
-from casadinlp.solvers import BaseSolver, CasadiSolver, JaxSolver
-from casadinlp.utilities import generate_initial_guess
+from septal.casadax.factory import SolverFactory
+from septal.casadax.schema import NLPProblem, SolveResult
+from septal.casadax.solvers import BaseSolver, CasadiSolver, JaxSolver
+from septal.casadax.utilities import generate_initial_guess
 
 __all__ = [
     # Schema

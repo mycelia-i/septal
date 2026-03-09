@@ -1,9 +1,9 @@
-"""Tests for casadinlp.callbacks — JAX-CasADi AD wrappers."""
+"""Tests for septal.casadax.callbacks — JAX-CasADi AD wrappers."""
 
 import pytest
 import jax.numpy as jnp
 import numpy as np
-from casadinlp.callbacks import (
+from septal.casadax.callbacks import (
     JaxCasADiEvaluator,
     JaxCallbackForward,
     JaxCallbackReverse,

@@ -1,9 +1,9 @@
-"""Tests for casadinlp.schema — NLPProblem and SolveResult."""
+"""Tests for septal.casadax.schema — NLPProblem and SolveResult."""
 
 import pytest
 import jax.numpy as jnp
 import numpy as np
-from casadinlp.schema import NLPProblem, SolveResult
+from septal.casadax.schema import NLPProblem, SolveResult
 
 
 class TestNLPProblem:

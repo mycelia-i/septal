@@ -1,5 +1,5 @@
 """
-Standard NLP schema for casadinlp.
+Standard NLP schema for septal.
 
 Defines the input problem (NLPProblem) and output result (SolveResult)
 dataclasses used across all solver backends.
@@ -72,7 +72,7 @@ class NLPProblem:
 
 @dataclass
 class SolveResult:
-    """Result returned by every casadinlp solver.
+    """Result returned by every septal solver.
 
     Parameters
     ----------
