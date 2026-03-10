@@ -10,7 +10,15 @@ Exports the public API needed to formulate and solve parametric NLPs:
         SQPState,
         ParametricSQPFactory,
     )
+
+Float64 precision is enabled globally for this module on import so that the
+SQP solver, BFGS Hessian updates and ADMM inner iterations all operate in
+double precision.  JAX defaults to float32; without x64 enabled the BFGS
+Hessian can become indefinite from accumulated rounding error.
 """
+
+import jax
+jax.config.update("jax_enable_x64", True)
 
 from septal.jax.sqp.schema import (
     ParametricNLPProblem,

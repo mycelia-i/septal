@@ -28,7 +28,7 @@ import jax.numpy as jnp
 
 from septal.jax.sqp.schema import ParametricNLPProblem, SQPConfig, SQPResult, SQPState
 from septal.jax.sqp.convergence import is_converged
-from septal.jax.sqp.hessian import bfgs_update, lagrangian_grad
+from septal.jax.sqp.hessian import bfgs_update, lagrangian_grad, lagrangian_hessian
 from septal.jax.sqp.line_search import (
     backtracking_line_search,
     l1_merit,
@@ -69,24 +69,24 @@ def init_sqp_state(
     """
     n = problem.n_decision
     n_g = problem.n_constraints or 0
-    x0 = jnp.asarray(x0).reshape(n)
-    p = jnp.asarray(p).reshape(problem.n_params) if problem.n_params > 0 else jnp.zeros(0)
+    x0 = jnp.asarray(x0, dtype=jnp.float64).reshape(n)
+    p = (jnp.asarray(p, dtype=jnp.float64).reshape(problem.n_params)
+         if problem.n_params > 0 else jnp.zeros(0, dtype=jnp.float64))
 
     f0 = jnp.asarray(problem.objective(x0, p)).reshape(())
-    lam0 = jnp.zeros(n_g)
-    H0 = cfg.bfgs_init_scale * jnp.eye(n)
+    lam0 = jnp.zeros(n_g, dtype=jnp.float64)
+    H0 = cfg.bfgs_init_scale * jnp.eye(n, dtype=jnp.float64)
     gl0 = lagrangian_grad(x0, lam0, p, problem.objective, problem.constraints, n_g)
 
-    lhs = jnp.asarray(problem.constraint_lhs).reshape(n_g) if n_g > 0 else jnp.zeros(0)
-    rhs = jnp.asarray(problem.constraint_rhs).reshape(n_g) if n_g > 0 else jnp.zeros(0)
-    g0 = problem.constraints(x0, p).reshape(n_g) if n_g > 0 and problem.constraints is not None else jnp.zeros(0)
+    lhs = jnp.asarray(problem.constraint_lhs, dtype=jnp.float64).reshape(n_g) if n_g > 0 else jnp.zeros(0, dtype=jnp.float64)
+    rhs = jnp.asarray(problem.constraint_rhs, dtype=jnp.float64).reshape(n_g) if n_g > 0 else jnp.zeros(0, dtype=jnp.float64)
+    g0 = problem.constraints(x0, p).reshape(n_g) if n_g > 0 and problem.constraints is not None else jnp.zeros(0, dtype=jnp.float64)
 
-    merit0 = l1_merit(f0, g0, lhs, rhs, jnp.array(cfg.penalty_init), n_g)
-    lb_arr = jnp.asarray(problem.lb).reshape(n)
-    ub_arr = jnp.asarray(problem.ub).reshape(n)
+    merit0 = l1_merit(f0, g0, lhs, rhs, jnp.array(cfg.penalty_init, dtype=jnp.float64), n_g)
+    lb_arr = jnp.asarray(problem.lb, dtype=jnp.float64).reshape(n)
+    ub_arr = jnp.asarray(problem.ub, dtype=jnp.float64).reshape(n)
 
-    # Dual-free initial stationarity: projected gradient of f onto [lb, ub].
-    # Consistent with the QP-step stationarity used in make_sqp_step.
+    # Projected-gradient stationarity (dual-free at k=0 since lam0=0).
     grad_f0 = jax.grad(problem.objective)(x0, p)
     stat0 = jnp.max(jnp.abs(jnp.clip(x0 - grad_f0, lb_arr, ub_arr) - x0))
 
@@ -97,7 +97,7 @@ def init_sqp_state(
             jnp.max(jnp.maximum(lhs - g0, 0.0)),
         )
     else:
-        feas0 = jnp.zeros(())
+        feas0 = jnp.zeros((), dtype=jnp.float64)
 
     return SQPState(
         x=x0,
@@ -106,7 +106,7 @@ def init_sqp_state(
         hessian=H0,
         grad_lag=gl0,
         f_val=f0,
-        penalty=jnp.array(cfg.penalty_init),
+        penalty=jnp.array(cfg.penalty_init, dtype=jnp.float64),
         merit=merit0,
         stationarity=stat0,
         feasibility=feas0,
@@ -132,10 +132,10 @@ def make_sqp_step(
     """
     n = problem.n_decision
     n_g = problem.n_constraints or 0
-    lb = jnp.asarray(problem.lb).reshape(n)
-    ub = jnp.asarray(problem.ub).reshape(n)
-    lhs = jnp.asarray(problem.constraint_lhs).reshape(n_g) if n_g > 0 else jnp.zeros(0)
-    rhs = jnp.asarray(problem.constraint_rhs).reshape(n_g) if n_g > 0 else jnp.zeros(0)
+    lb = jnp.asarray(problem.lb, dtype=jnp.float64).reshape(n)
+    ub = jnp.asarray(problem.ub, dtype=jnp.float64).reshape(n)
+    lhs = jnp.asarray(problem.constraint_lhs, dtype=jnp.float64).reshape(n_g) if n_g > 0 else jnp.zeros(0, dtype=jnp.float64)
+    rhs = jnp.asarray(problem.constraint_rhs, dtype=jnp.float64).reshape(n_g) if n_g > 0 else jnp.zeros(0, dtype=jnp.float64)
 
     def _do_step(state: SQPState) -> SQPState:
         x = state.x
@@ -150,16 +150,20 @@ def make_sqp_step(
             g_val = problem.constraints(x, p).reshape(n_g)
             jac_g = jax.jacfwd(problem.constraints)(x, p).reshape(n_g, n)
         else:
-            g_val = jnp.zeros(0)
-            jac_g = jnp.zeros((0, n))
+            g_val = jnp.zeros(0, dtype=jnp.float64)
+            jac_g = jnp.zeros((0, n), dtype=jnp.float64)
 
-        # 2. Solve QP subproblem
+        # 2. Solve QP subproblem — warm-start ADMM dual from previous multipliers
         d, lam_new = solve_qp_subproblem(
-            state.hessian, grad_f, jac_g, g_val, x, lb, ub, lhs, rhs, n, n_g, cfg
+            state.hessian, grad_f, jac_g, g_val, x, lb, ub, lhs, rhs, n, n_g, cfg,
+            lam_prev=state.lam,
         )
 
-        # 3. Penalty update (non-decreasing)
-        penalty_new = update_penalty(lam_new, state.penalty, n_g, cfg.penalty_eps)
+        # 3. Penalty update — decrease slowly when already feasible, increase otherwise
+        penalty_new = update_penalty(
+            lam_new, state.penalty, n_g, cfg.penalty_eps,
+            state.feasibility, cfg.penalty_decrease_factor,
+        )
 
         # 4. Directional derivative estimate and line search
         dir_deriv = merit_directional_deriv(grad_f, d, g_val, lhs, rhs, penalty_new, n_g)
@@ -178,30 +182,34 @@ def make_sqp_step(
         if n_g > 0 and problem.constraints is not None:
             g_new = problem.constraints(x_new, p).reshape(n_g)
         else:
-            g_new = jnp.zeros(0)
+            g_new = jnp.zeros(0, dtype=jnp.float64)
         merit_new = l1_merit(f_new, g_new, lhs, rhs, penalty_new, n_g)
 
-        # 7. Lagrangian gradient at new iterate (for BFGS)
+        # 7. Lagrangian gradient at new iterate (for BFGS and stationarity)
         grad_lag_new = lagrangian_grad(
             x_new, lam_new, p, problem.objective, problem.constraints, n_g
         )
 
-        # 8. Damped BFGS Hessian update
-        s = x_new - x
-        y = grad_lag_new - state.grad_lag
-        H_new = bfgs_update(state.hessian, s, y, cfg.bfgs_skip_tol)
+        # 8. Hessian update: exact Lagrangian Hessian (jax.hessian) or damped BFGS
+        if cfg.use_exact_hessian:
+            H_new = lagrangian_hessian(x_new, lam_new, p, problem.objective, problem.constraints, n_g)
+        else:
+            s = x_new - x
+            y = grad_lag_new - state.grad_lag
+            H_new = bfgs_update(state.hessian, s, y, cfg.bfgs_skip_tol, cfg.bfgs_max_cond)
 
-        # 9. Stationarity: use QP-step norm ‖d‖_∞ (dual-free).
-        #    At a KKT point the QP yields d=0 regardless of multiplier accuracy.
-        #    Feasibility is computed from the already-evaluated g_new.
-        stat_new = jnp.max(jnp.abs(d))
+        # 9. Stationarity: projected-gradient KKT residual.
+        #    Reuses grad_lag_new (already computed above for BFGS) — zero extra cost.
+        #    ‖clip(x_new − ∇L_new, lb, ub) − x_new‖_∞ correctly handles active
+        #    box constraints and relies on accurate multiplier estimates lam_new.
+        stat_new = jnp.max(jnp.abs(jnp.clip(x_new - grad_lag_new, lb, ub) - x_new))
         if n_g > 0:
             feas_new = jnp.maximum(
                 jnp.max(jnp.maximum(g_new - rhs, 0.0)),
                 jnp.max(jnp.maximum(lhs - g_new, 0.0)),
             )
         else:
-            feas_new = jnp.zeros(())
+            feas_new = jnp.zeros((), dtype=jnp.float64)
         conv_new = is_converged(stat_new, feas_new, cfg)
 
         return SQPState(

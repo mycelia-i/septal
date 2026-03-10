@@ -17,11 +17,24 @@ For the SQP search direction d_k:
 where v(x_k) = Σᵢ max violations.  This is the standard sufficient descent
 condition used to check acceptability of the penalty parameter.
 
+Penalty update
+--------------
+The penalty is updated non-decreasingly when the iterate is infeasible
+(standard exact-penalty condition: ρ > ‖λ‖_∞ ensures exactness).  When the
+iterate is already feasible, the penalty is allowed to shrink slowly by a
+factor ``penalty_decrease_factor`` toward max(‖λ‖_∞ + ε, 0).  This prevents
+the penalty from growing without bound at feasible non-optimal points, which
+would otherwise make the merit function indifferent to objective improvement.
+
 Line search
 -----------
 Armijo backtracking via ``jax.lax.while_loop`` (JIT- and vmap-compatible):
 
     α ← α · β  until  φ(x + α·d) ≤ φ(x) + c·α·D_φ
+
+If the directional derivative D_φ ≥ 0 (non-descent direction, which can
+happen when the ADMM inner solve has not converged), the line search is
+skipped and α = 0 is returned to avoid taking a damaging step.
 """
 
 from __future__ import annotations
@@ -113,15 +126,43 @@ def update_penalty(
     penalty: jnp.ndarray,
     n_g: int,
     eps: float,
+    feasibility: jnp.ndarray,
+    decrease_factor: float,
 ) -> jnp.ndarray:
-    """Non-decreasing penalty update: ρ_{k+1} = max(‖λ_k‖_∞ + ε, ρ_k).
+    """Penalty update with feasibility-aware decrease.
 
-    Ensures the penalty parameter is large enough for the merit function
-    to be an exact penalty (i.e. local NLP optima are merit function optima).
+    When the iterate is infeasible (feasibility > eps) the penalty grows
+    non-decreasingly: ρ_{k+1} = max(‖λ_k‖_∞ + ε, ρ_k).
+
+    When the iterate is already feasible the penalty is allowed to shrink
+    slowly: ρ_{k+1} = max(‖λ_k‖_∞ + ε, decrease_factor · ρ_k).  This
+    prevents ρ from growing without bound at feasible non-optimal iterates,
+    which would otherwise dominate the merit function and stall objective
+    improvement.
+
+    Parameters
+    ----------
+    lam:
+        Current multiplier estimates, shape ``(n_g,)``.
+    penalty:
+        Current penalty parameter, scalar.
+    n_g:
+        Number of general constraints.
+    eps:
+        Small margin: target = ‖λ‖_∞ + eps.
+    feasibility:
+        Current primal feasibility residual (L∞ constraint violation), scalar.
+        Compared against ``eps`` to decide increase vs decrease.
+    decrease_factor:
+        Multiplicative factor in [0, 1) for slow penalty reduction when
+        feasible.  Use 1.0 to disable (reverts to non-decreasing behaviour).
     """
     if n_g > 0:
         lam_inf = jnp.max(jnp.abs(lam))
-        return jnp.maximum(lam_inf + eps, penalty)
+        target = lam_inf + eps
+        penalty_up   = jnp.maximum(target, penalty)
+        penalty_down = jnp.maximum(target, decrease_factor * penalty)
+        return jnp.where(feasibility < eps, penalty_down, penalty_up)
     return penalty
 
 
@@ -153,6 +194,10 @@ def backtracking_line_search(
 
     or until ``cfg.max_line_search`` trials are exhausted.
 
+    If ``dir_deriv ≥ 0`` (non-descent direction — can occur when the ADMM
+    inner solve stalls and returns an inaccurate step), the search is skipped
+    and ``α = 0`` is returned so that no update is taken this iteration.
+
     Parameters
     ----------
     x:
@@ -181,7 +226,7 @@ def backtracking_line_search(
     Returns
     -------
     jnp.ndarray
-        Accepted step length ``α``, scalar.
+        Accepted step length ``α``, scalar.  Returns 0 when dir_deriv ≥ 0.
     """
     beta = cfg.line_search_beta
     c = cfg.line_search_c
@@ -206,5 +251,10 @@ def backtracking_line_search(
         alpha, i = state
         return (alpha * beta, i + 1)
 
-    alpha_final, _ = jax.lax.while_loop(cond_fn, body_fn, (alpha0, 0))
-    return alpha_final
+    alpha_ls, _ = jax.lax.while_loop(cond_fn, body_fn, (alpha0, 0))
+
+    # If the direction is not a merit-function descent direction (dir_deriv >= 0),
+    # taking any step risks increasing the merit.  Return alpha=0 to skip this
+    # iteration rather than taking a damaging micro-step.
+    is_descent = dir_deriv < 0.0
+    return jnp.where(is_descent, alpha_ls, jnp.zeros_like(alpha0))

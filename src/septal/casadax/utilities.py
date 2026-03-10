@@ -33,7 +33,7 @@ def generate_initial_guess(n_starts: int, n_d: int, bounds: List[Any]) -> Any:
     n_d = len(bounds[0])
     lb = jnp.array(bounds[0])
     ub = jnp.array(bounds[1])
-    sobol = qmc.Sobol(d=n_d, scramble=True).random(n_starts)
+    sobol = qmc.Sobol(d=n_d, scramble=True, seed=42).random(n_starts)
     return lb + (ub - lb) * sobol
 
 

@@ -18,6 +18,14 @@ definite, which is required for the QP subproblem to be convex:
 
     r_k = θ_k y_k + (1 - θ_k) H_k s_k
 
+Condition-number reset
+----------------------
+After each BFGS update the spectral condition number of H is checked via
+``jnp.linalg.eigvalsh``.  If cond(H) > ``max_cond`` the matrix is reset to
+``mean(diag(H)) * I``.  This prevents the Hessian approximation from becoming
+ill-conditioned on problems with curved equality manifolds where the full-space
+Lagrangian Hessian is indefinite (e.g. hs006, hs039).
+
 All operations are pure JAX — no Python control flow on traced values.
 """
 
@@ -32,8 +40,9 @@ def bfgs_update(
     s: jnp.ndarray,
     y: jnp.ndarray,
     skip_tol: float = 1e-10,
+    max_cond: float = 1e8,
 ) -> jnp.ndarray:
-    """Damped BFGS rank-2 Hessian update.
+    """Damped BFGS rank-2 Hessian update with condition-number safeguard.
 
     Parameters
     ----------
@@ -46,6 +55,9 @@ def bfgs_update(
         Lagrangian gradient difference ``∇L_{k+1} - ∇L_k``, shape ``(n,)``.
     skip_tol:
         If ``sᵀs < skip_tol`` the update is skipped (step was numerically zero).
+    max_cond:
+        If ``cond(H_new) > max_cond`` the Hessian is reset to
+        ``mean(diag(H_new)) * I`` to prevent ill-conditioning.
 
     Returns
     -------
@@ -75,7 +87,58 @@ def bfgs_update(
     # Symmetrise to counteract floating-point drift
     H_new = 0.5 * (H_new + H_new.T)
 
+    # Condition-number safeguard: reset to scaled identity when H becomes
+    # ill-conditioned.  This protects against Hessian deterioration on
+    # curved constraint manifolds where the Lagrangian Hessian is indefinite
+    # on the full space (positive only on the constraint tangent space).
+    eigs = jnp.linalg.eigvalsh(H_new)          # sorted ascending, O(n³)
+    eig_max = eigs[-1]
+    eig_min = jnp.maximum(eigs[0], 1e-30)
+    cond = eig_max / eig_min
+    reset_scale = jnp.mean(jnp.diag(H_new))
+    H_new = jnp.where(cond > max_cond, reset_scale * jnp.eye(H.shape[0]), H_new)
+
     return H_new
+
+
+def lagrangian_hessian(
+    x: jnp.ndarray,
+    lam: jnp.ndarray,
+    p: jnp.ndarray,
+    objective: callable,
+    constraints: callable,
+    n_g: int,
+) -> jnp.ndarray:
+    """Compute the exact Lagrangian Hessian ∇²_xx L(x, λ, p) via ``jax.hessian``.
+
+    Parameters
+    ----------
+    x:
+        Current iterate, shape ``(n,)``.
+    lam:
+        Dual variables for general constraints, shape ``(n_g,)``.
+    p:
+        Parameter vector, shape ``(m,)``.
+    objective:
+        JAX callable ``f(x, p) -> scalar``.
+    constraints:
+        JAX callable ``g(x, p) -> (n_g,)`` or ``None``.
+    n_g:
+        Number of general constraints.
+
+    Returns
+    -------
+    jnp.ndarray, shape ``(n, n)``
+        ``∇²f(x, p) + Σᵢ λᵢ ∇²gᵢ(x, p)``.
+    """
+    def lagrangian(x_: jnp.ndarray) -> jnp.ndarray:
+        f = objective(x_, p)
+        if n_g > 0 and constraints is not None:
+            g = constraints(x_, p)
+            return f + lam @ g
+        return f
+
+    return jax.hessian(lagrangian)(x)
 
 
 def lagrangian_grad(
