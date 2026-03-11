@@ -28,7 +28,12 @@ import jax.numpy as jnp
 
 from septal.jax.sqp.schema import ParametricNLPProblem, SQPConfig, SQPResult, SQPState
 from septal.jax.sqp.convergence import is_converged
-from septal.jax.sqp.hessian import bfgs_update, lagrangian_grad, lagrangian_hessian
+from septal.jax.sqp.hessian import (
+    bfgs_update,
+    lagrangian_grad,
+    lagrangian_hessian,
+    regularised_lagrangian_hessian,
+)
 from septal.jax.sqp.line_search import (
     backtracking_line_search,
     l1_merit,
@@ -112,6 +117,9 @@ def init_sqp_state(
         feasibility=feas0,
         iteration=jnp.array(0, dtype=jnp.int32),
         converged=is_converged(stat0, feas0, cfg),
+        merit_window=jnp.full(cfg.nonmonotone_window, merit0, dtype=jnp.float64),
+        stagnation_count=jnp.array(0, dtype=jnp.int32),
+        alpha_last=jnp.array(1.0, dtype=jnp.float64),
     )
 
 
@@ -166,10 +174,12 @@ def make_sqp_step(
         )
 
         # 4. Directional derivative estimate and line search
+        #    Non-monotone reference: max merit over the last M iterates.
+        reference_merit = jnp.max(state.merit_window)
         dir_deriv = merit_directional_deriv(grad_f, d, g_val, lhs, rhs, penalty_new, n_g)
         alpha = backtracking_line_search(
             x, d, p,
-            state.merit, dir_deriv, penalty_new,
+            reference_merit, dir_deriv, penalty_new,
             problem.objective, problem.constraints,
             lhs, rhs, n_g, cfg,
         )
@@ -190,18 +200,19 @@ def make_sqp_step(
             x_new, lam_new, p, problem.objective, problem.constraints, n_g
         )
 
-        # 8. Hessian update: exact Lagrangian Hessian (jax.hessian) or damped BFGS
+        # 8. Hessian update: exact Lagrangian Hessian (jax.hessian) or damped BFGS.
+        #    Exact path: regularise to PD via eigenvalue shift (inertia correction).
         if cfg.use_exact_hessian:
-            H_new = lagrangian_hessian(x_new, lam_new, p, problem.objective, problem.constraints, n_g)
+            H_new = regularised_lagrangian_hessian(
+                x_new, lam_new, p, problem.objective, problem.constraints, n_g,
+                cfg.hess_reg_delta, cfg.hess_reg_min,
+            )
         else:
             s = x_new - x
             y = grad_lag_new - state.grad_lag
             H_new = bfgs_update(state.hessian, s, y, cfg.bfgs_skip_tol, cfg.bfgs_max_cond)
 
         # 9. Stationarity: projected-gradient KKT residual.
-        #    Reuses grad_lag_new (already computed above for BFGS) — zero extra cost.
-        #    ‖clip(x_new − ∇L_new, lb, ub) − x_new‖_∞ correctly handles active
-        #    box constraints and relies on accurate multiplier estimates lam_new.
         stat_new = jnp.max(jnp.abs(jnp.clip(x_new - grad_lag_new, lb, ub) - x_new))
         if n_g > 0:
             feas_new = jnp.maximum(
@@ -212,19 +223,46 @@ def make_sqp_step(
             feas_new = jnp.zeros((), dtype=jnp.float64)
         conv_new = is_converged(stat_new, feas_new, cfg)
 
+        # 10. Non-monotone merit window: roll left, insert new merit at end.
+        merit_window_new = jnp.roll(state.merit_window, -1).at[-1].set(merit_new)
+
+        # 11. Stagnation detection and reset.
+        #     Count consecutive iterations where the step was essentially zero.
+        is_stagnating = alpha < cfg.stagnation_alpha_tol
+        stagnation_new = jnp.where(
+            is_stagnating,
+            state.stagnation_count + 1,
+            jnp.array(0, dtype=jnp.int32),
+        )
+        do_reset = stagnation_new >= cfg.stagnation_patience
+
+        # When stagnating: reset Hessian to scaled identity and deflate penalty.
+        H_reset = cfg.bfgs_init_scale * jnp.eye(n, dtype=H_new.dtype)
+        H_final = jnp.where(
+            do_reset & cfg.stagnation_reset_hessian, H_reset, H_new
+        )
+        penalty_reset = jnp.array(cfg.penalty_init, dtype=jnp.float64)
+        penalty_final = jnp.where(
+            do_reset & cfg.stagnation_reset_penalty, penalty_reset, penalty_new
+        )
+        stagnation_final = jnp.where(do_reset, jnp.array(0, dtype=jnp.int32), stagnation_new)
+
         return SQPState(
             x=x_new,
             params_p=p,
             lam=lam_new,
-            hessian=H_new,
+            hessian=H_final,
             grad_lag=grad_lag_new,
             f_val=f_new,
-            penalty=penalty_new,
+            penalty=penalty_final,
             merit=merit_new,
             stationarity=stat_new,
             feasibility=feas_new,
             iteration=state.iteration + 1,
             converged=conv_new,
+            merit_window=merit_window_new,
+            stagnation_count=stagnation_final,
+            alpha_last=alpha,
         )
 
     def sqp_step(state: SQPState, _: None) -> tuple[SQPState, None]:

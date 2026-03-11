@@ -175,7 +175,7 @@ def backtracking_line_search(
     x: jnp.ndarray,
     d: jnp.ndarray,
     p: jnp.ndarray,
-    current_merit: jnp.ndarray,
+    reference_merit: jnp.ndarray,
     dir_deriv: jnp.ndarray,
     penalty: jnp.ndarray,
     objective: Callable,
@@ -190,9 +190,13 @@ def backtracking_line_search(
     Starts with ``α = cfg.line_search_alpha0`` and multiplies by
     ``cfg.line_search_beta`` until
 
-        φ(x + α·d; ρ)  ≤  φ(x; ρ) + c · α · D_φ(x; d)
+        φ(x + α·d; ρ)  ≤  reference_merit + c · α · D_φ(x; d)
 
     or until ``cfg.max_line_search`` trials are exhausted.
+
+    ``reference_merit`` is typically the maximum merit over the last M
+    iterates (non-monotone line search, Grippo et al. 1986).  Passing
+    the current merit recovers standard monotone Armijo.
 
     If ``dir_deriv ≥ 0`` (non-descent direction — can occur when the ADMM
     inner solve stalls and returns an inaccurate step), the search is skipped
@@ -206,8 +210,10 @@ def backtracking_line_search(
         Search direction, shape ``(n,)``.
     p:
         Parameter vector, shape ``(m,)``.
-    current_merit:
-        Merit value at ``x``, scalar.
+    reference_merit:
+        Reference merit level for the Armijo condition.  For non-monotone
+        line search, pass ``jnp.max(state.merit_window)``; for standard
+        monotone, pass the current merit ``state.merit``.
     dir_deriv:
         Directional derivative estimate at ``x`` along ``d``, scalar.
     penalty:
@@ -243,7 +249,7 @@ def backtracking_line_search(
     def cond_fn(state: tuple) -> jnp.ndarray:
         alpha, i = state
         trial_merit = _merit_at(alpha)
-        armijo = trial_merit <= current_merit + c * alpha * dir_deriv
+        armijo = trial_merit <= reference_merit + c * alpha * dir_deriv
         # Continue if Armijo fails AND we have more trials
         return (~armijo) & (i < cfg.max_line_search)
 

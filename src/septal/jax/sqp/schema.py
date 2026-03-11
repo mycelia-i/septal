@@ -183,6 +183,33 @@ class SQPConfig:
                                              # (e.g. hs006, hs039) but costs O(n²)
                                              # AD passes per iteration.
 
+    # ── Non-convex robustness ────────────────────────────────────────────────
+
+    hess_reg_delta: float = 1e-4            # Minimum eigenvalue target for the exact
+                                             # Lagrangian Hessian (use_exact_hessian=True
+                                             # path only).  When the Lagrangian Hessian
+                                             # has eigenvalues below this threshold, an
+                                             # additive shift tau*I is applied to make Q
+                                             # positive definite before the QP subproblem.
+                                             # Set 0 to disable.
+    hess_reg_min: float = 1e-8              # Minimum regularisation always added to the
+                                             # exact Hessian (prevents exactly-zero shift
+                                             # when hess_reg_delta == 0).
+
+    nonmonotone_window: int = 5             # Non-monotone line search memory (Grippo et
+                                             # al. 1986).  The Armijo condition uses the
+                                             # maximum merit over the last M iterates as
+                                             # its reference level, allowing temporary
+                                             # increases that help escape saddle points.
+                                             # M=1 recovers the standard monotone Armijo.
+
+    stagnation_patience: int = 30           # Number of consecutive near-zero steps
+                                             # before triggering a stagnation reset.
+    stagnation_alpha_tol: float = 1e-6      # Step-length threshold: alpha < tol
+                                             # counts as a stagnated iteration.
+    stagnation_reset_hessian: bool = True   # Reset H to bfgs_init_scale * I on stagnation.
+    stagnation_reset_penalty: bool = True   # Deflate penalty to penalty_init on stagnation.
+
 
 # ---------------------------------------------------------------------------
 # Solver state  (JAX pytree via NamedTuple)
@@ -233,6 +260,10 @@ class SQPState(NamedTuple):
     feasibility: jnp.ndarray
     iteration: jnp.ndarray
     converged: jnp.ndarray
+    merit_window: jnp.ndarray       # shape (nonmonotone_window,) — rolling buffer of
+                                    # recent merit values for non-monotone line search.
+    stagnation_count: jnp.ndarray   # integer scalar — consecutive near-zero steps.
+    alpha_last: jnp.ndarray         # scalar — step length accepted on last iteration.
 
 
 # ---------------------------------------------------------------------------

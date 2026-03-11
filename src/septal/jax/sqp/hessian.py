@@ -101,6 +101,51 @@ def bfgs_update(
     return H_new
 
 
+def regularised_lagrangian_hessian(
+    x: jnp.ndarray,
+    lam: jnp.ndarray,
+    p: jnp.ndarray,
+    objective: callable,
+    constraints: callable,
+    n_g: int,
+    hess_reg_delta: float = 1e-4,
+    hess_reg_min: float = 1e-8,
+) -> jnp.ndarray:
+    """Exact Lagrangian Hessian with adaptive PD regularisation.
+
+    Computes ``∇²_xx L(x, λ, p)`` via ``jax.hessian`` then applies an
+    additive shift ``tau * I`` to ensure all eigenvalues are at least
+    ``hess_reg_delta``.  This guarantees the QP subproblem receives a
+    positive-definite Hessian regardless of the iterate's non-convexity.
+
+    Parameters
+    ----------
+    x, lam, p, objective, constraints, n_g:
+        See :func:`lagrangian_hessian`.
+    hess_reg_delta:
+        Target minimum eigenvalue.  Shift is applied only when the
+        smallest eigenvalue is below this threshold.
+    hess_reg_min:
+        Minimum shift always added (even when all eigenvalues exceed
+        ``hess_reg_delta``), preventing an exactly-zero shift that could
+        leave borderline eigenvalues unprotected.
+
+    Returns
+    -------
+    jnp.ndarray, shape ``(n, n)``
+        Symmetrised, PD-regularised Lagrangian Hessian.
+    """
+    H = lagrangian_hessian(x, lam, p, objective, constraints, n_g)
+    H = 0.5 * (H + H.T)                       # symmetrise against AD drift
+    eigs = jnp.linalg.eigvalsh(H)             # ascending order, O(n³)
+    lam_min = eigs[0]
+    # Shift: tau = max(hess_reg_min, -lam_min + hess_reg_delta)
+    # Applied only when lam_min < hess_reg_delta; otherwise tau = hess_reg_min.
+    tau_needed = jnp.maximum(hess_reg_min, -lam_min + hess_reg_delta)
+    tau = jnp.where(lam_min < hess_reg_delta, tau_needed, hess_reg_min)
+    return H + tau * jnp.eye(H.shape[0], dtype=H.dtype)
+
+
 def lagrangian_hessian(
     x: jnp.ndarray,
     lam: jnp.ndarray,
