@@ -560,16 +560,18 @@ def solve_qp_subproblem(
 
     # --- OSQP-style polishing (static Python branch — disabled at trace time
     #     when cfg.admm_polish=False, same pattern as admm_adaptive_rho) ----
-    # Pre-compute active-set flag here so we can gate polishing before calling
-    # polish_qp.  For problems with no finite-bound active constraints (e.g.
-    # unconstrained problems where all bounds are ±∞), polishing would reduce
-    # to a pure Newton step -(Q+σI)⁻¹c which diverges for non-convex Q.
-    _is_eq_pre  = l_all == u_all
-    _lower_pre  = ((z_s - l_all) < -y_s) | _is_eq_pre
-    _upper_pre  = ((u_all - z_s) < y_s) & ~_is_eq_pre
-    _has_active = (_lower_pre | _upper_pre).any()
-
     if cfg.admm_polish:
+        # Active-set flag: gating inside the branch keeps these 4 operations
+        # out of the XLA graph entirely when admm_polish=False, which matters
+        # for vmap compile time (nested scans under vmap amplify body size).
+        # For problems with no finite-bound active constraints (e.g. unconstrained
+        # problems where all bounds are ±∞), polishing reduces to a pure Newton
+        # step -(Q+σI)⁻¹c which diverges for non-convex Q — hence the gate.
+        _is_eq_pre  = l_all == u_all
+        _lower_pre  = ((z_s - l_all) < -y_s) | _is_eq_pre
+        _upper_pre  = ((u_all - z_s) < y_s) & ~_is_eq_pre
+        _has_active = (_lower_pre | _upper_pre).any()
+
         d_pol_s, y_pol_s = polish_qp(
             Q, c, A, l_all, u_all,
             d_s, y_s, z_s,

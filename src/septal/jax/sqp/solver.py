@@ -315,6 +315,74 @@ def sqp_solve_single(
     return jax.lax.while_loop(cond_fn, body_fn, state)
 
 
+def make_batch_solver(
+    problem: ParametricNLPProblem,
+    cfg: SQPConfig,
+    mode: str = "pmap",
+) -> Callable[[jnp.ndarray, jnp.ndarray], SQPState]:
+    """Return a batched solver that parallelises over a leading batch dimension.
+
+    Parameters
+    ----------
+    problem:
+        Parametric NLP (captured in closure, treated as static).
+    cfg:
+        Solver configuration (captured in closure, treated as static).
+    mode:
+        ``"pmap"`` — distributes instances across XLA devices via
+        ``jax.pmap``.  Each device runs one instance of
+        ``sqp_solve_scan`` using the *same* compiled program as the
+        single-instance solver — **no extra compilation overhead**.
+        Batch size along axis-0 must equal ``jax.local_device_count()``
+        (or a multiple thereof when chunked externally).
+
+        ``"vmap"`` — vectorises the batch on one device via
+        ``jax.jit(jax.vmap(...))``.  Supports any batch size but XLA
+        must compile a vectorised program whose size scales with
+        ``max_iter × admm_n_iter``, which can be slow for large budgets.
+
+    Returns
+    -------
+    Callable
+        ``solve_batch(x0_batch, p_batch) -> SQPState``
+
+        * ``x0_batch`` : ``(D, n)``  for pmap  (D = device count),
+                         ``(N, n)``  for vmap  (N = any batch size).
+        * ``p_batch``  : ``(D, n_params)`` / ``(N, n_params)``
+                         correspondingly.  Use ``jnp.zeros((N, 0))``
+                         for parameter-free problems.
+
+    Notes
+    -----
+    For ``pmap`` with N instances and D devices, call this function once
+    to get ``solve_batch``, then chunk::
+
+        D = jax.local_device_count()
+        x0_chunks = x0_batch.reshape(N // D, D, n)
+        p_chunks  = p_batch.reshape(N // D, D, n_params)
+        states = [solve_batch(x0_chunks[i], p_chunks[i])
+                  for i in range(N // D)]
+
+    To simulate multiple CPU devices set the environment variable
+    *before* importing JAX::
+
+        XLA_FLAGS=--xla_force_host_platform_device_count=8 python script.py
+    """
+
+    def _solve_single(x0: jnp.ndarray, p: jnp.ndarray) -> SQPState:
+        return sqp_solve_scan(problem, x0, p, cfg)
+
+    if mode == "pmap":
+        return jax.pmap(_solve_single)
+    elif mode == "vmap":
+        @jax.jit
+        def _solve_vmap(x0_batch: jnp.ndarray, p_batch: jnp.ndarray) -> SQPState:
+            return jax.vmap(_solve_single)(x0_batch, p_batch)
+        return _solve_vmap
+    else:
+        raise ValueError(f"mode must be 'pmap' or 'vmap', got {mode!r}")
+
+
 def make_solver(
     problem: ParametricNLPProblem,
     cfg: SQPConfig,
