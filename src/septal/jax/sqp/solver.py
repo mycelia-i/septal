@@ -356,7 +356,7 @@ def sqp_solve_single(
 def make_batch_solver(
     problem: ParametricNLPProblem,
     cfg: SQPConfig,
-    mode: str = "pmap",
+    mode: str = "vmap",
 ) -> Callable[[jnp.ndarray, jnp.ndarray], SQPState]:
     """Return a batched solver that parallelises over a leading batch dimension.
 
@@ -367,31 +367,33 @@ def make_batch_solver(
     cfg:
         Solver configuration (captured in closure, treated as static).
     mode:
+        ``"vmap"`` — vectorises the batch on one device via
+        ``jax.jit(jax.vmap(...))``.  Supports any batch size and is safe
+        to call from inside an outer ``jax.pmap`` (vmap composes with pmap).
+
         ``"pmap"`` — distributes instances across XLA devices via
         ``jax.pmap``.  Each device runs one instance of
-        ``sqp_solve_scan`` using the *same* compiled program as the
-        single-instance solver — **no extra compilation overhead**.
-        Batch size along axis-0 must equal ``jax.local_device_count()``
-        (or a multiple thereof when chunked externally).
-
-        ``"vmap"`` — vectorises the batch on one device via
-        ``jax.jit(jax.vmap(...))``.  Supports any batch size but XLA
-        must compile a vectorised program whose size scales with
-        ``max_iter × admm_n_iter``, which can be slow for large budgets.
+        ``sqp_solve_scan``.  Batch size along axis-0 must equal
+        ``jax.local_device_count()`` (or a multiple thereof when chunked
+        externally).  **Cannot be called from inside another pmap context**
+        (nested pmap is not supported by JAX).
 
     Returns
     -------
     Callable
         ``solve_batch(x0_batch, p_batch) -> SQPState``
 
-        * ``x0_batch`` : ``(D, n)``  for pmap  (D = device count),
-                         ``(N, n)``  for vmap  (N = any batch size).
-        * ``p_batch``  : ``(D, n_params)`` / ``(N, n_params)``
+        * ``x0_batch`` : ``(N, n)``  for vmap  (N = any batch size),
+                         ``(D, n)``  for pmap  (D = device count).
+        * ``p_batch``  : ``(N, n_params)`` / ``(D, n_params)``
                          correspondingly.  Use ``jnp.zeros((N, 0))``
                          for parameter-free problems.
 
     Notes
     -----
+    The default mode is ``"vmap"``.  Use ``"pmap"`` only at the outermost
+    call site — never inside an existing ``jax.pmap`` context.
+
     For ``pmap`` with N instances and D devices, call this function once
     to get ``solve_batch``, then chunk::
 
@@ -410,15 +412,15 @@ def make_batch_solver(
     def _solve_single(x0: jnp.ndarray, p: jnp.ndarray) -> SQPState:
         return sqp_solve_scan(problem, x0, p, cfg)
 
-    if mode == "pmap":
-        return jax.pmap(_solve_single)
-    elif mode == "vmap":
+    if mode == "vmap":
         @jax.jit
         def _solve_vmap(x0_batch: jnp.ndarray, p_batch: jnp.ndarray) -> SQPState:
             return jax.vmap(_solve_single)(x0_batch, p_batch)
         return _solve_vmap
+    elif mode == "pmap":
+        return jax.pmap(_solve_single)
     else:
-        raise ValueError(f"mode must be 'pmap' or 'vmap', got {mode!r}")
+        raise ValueError(f"mode must be 'vmap' or 'pmap', got {mode!r}")
 
 
 def make_solver(
