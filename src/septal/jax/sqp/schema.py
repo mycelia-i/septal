@@ -177,7 +177,7 @@ class SQPConfig:
                                              # penalty when the iterate is already
                                              # feasible, preventing penalty blow-up
                                              # at feasible non-optimal points.
-    use_exact_hessian: bool = False          # Use exact Lagrangian Hessian via
+    use_exact_hessian: bool = True           # Use exact Lagrangian Hessian via
                                              # jax.hessian instead of BFGS.  More
                                              # accurate on curved constraint manifolds
                                              # (e.g. hs006, hs039) but costs O(n²)
