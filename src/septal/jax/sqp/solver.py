@@ -25,6 +25,8 @@ from typing import Callable
 
 import jax
 import jax.numpy as jnp
+import numpy as np
+from scipy.stats import qmc
 
 from septal.jax.sqp.schema import ParametricNLPProblem, SQPConfig, SQPResult, SQPState
 from septal.jax.sqp.convergence import is_converged
@@ -351,6 +353,101 @@ def sqp_solve_single(
         return new_s
 
     return jax.lax.while_loop(cond_fn, body_fn, state)
+
+
+def select_initial_points(
+    problem: ParametricNLPProblem,
+    p: jnp.ndarray,
+    n_select: int,
+    n_candidates: int = 256,
+    penalty: float = 10.0,
+    seed: int = 42,
+    inf_fallback: float = 1e3,
+) -> jnp.ndarray:
+    """Rank Sobol candidates by L1 merit and return the best ``n_select``.
+
+    Generates ``n_candidates`` points from a scrambled Sobol sequence within
+    the problem's decision bounds, evaluates the L1 merit function
+
+        φ(x) = f(x, p) + penalty · Σᵢ [max(gᵢ(x,p) − rhsᵢ, 0)
+                                        + max(lhsᵢ − gᵢ(x,p), 0)]
+
+    at each candidate via ``jax.vmap``, and returns the ``n_select`` points
+    with the lowest merit value (best first).
+
+    Parameters
+    ----------
+    problem:
+        Parametric NLP definition.
+    p:
+        Fixed parameter vector, shape ``(n_params,)``.  A representative
+        value should be used when this is called for a batch (e.g. the
+        batch mean).
+    n_select:
+        Number of points to return.  Must be ≤ ``n_candidates``.
+    n_candidates:
+        Total Sobol candidates to evaluate.  Should be a power of 2 for
+        best Sobol uniformity.  Default 256.
+    penalty:
+        L1 penalty weight ρ for constraint violation used in ranking.
+        Should be ≥ the expected optimal dual variable magnitude.
+        Default 10.0.
+    seed:
+        Sobol scramble seed.  Default 42.
+    inf_fallback:
+        Range used to replace infinite bounds when generating the Sobol
+        sequence.  If lb[i] = −∞ but ub[i] is finite, the effective lower
+        bound is ``ub[i] − inf_fallback``, and vice versa.  Default 1e3.
+
+    Returns
+    -------
+    jnp.ndarray
+        Shape ``(n_select, n_decision)`` — best candidates ranked by L1
+        merit (lowest merit = index 0).
+    """
+    n = problem.n_decision
+    n_g = problem.n_constraints or 0
+
+    # ── Clamp infinite bounds so Sobol stays in a finite hypercube ──────────
+    lb_np = np.asarray(problem.lb, dtype=np.float64).reshape(n)
+    ub_np = np.asarray(problem.ub, dtype=np.float64).reshape(n)
+    lb_safe = np.where(
+        np.isfinite(lb_np), lb_np,
+        np.where(np.isfinite(ub_np), ub_np - inf_fallback, -inf_fallback),
+    )
+    ub_safe = np.where(
+        np.isfinite(ub_np), ub_np,
+        np.where(np.isfinite(lb_np), lb_np + inf_fallback, inf_fallback),
+    )
+
+    # ── Sobol generation (host-side NumPy) ───────────────────────────────────
+    sobol = qmc.Sobol(d=n, scramble=True, seed=seed).random(n_candidates)
+    candidates = jnp.asarray(
+        lb_safe + (ub_safe - lb_safe) * sobol, dtype=jnp.float64
+    )  # (n_candidates, n)
+
+    # ── L1 merit ingredients ─────────────────────────────────────────────────
+    lhs = (jnp.asarray(problem.constraint_lhs, dtype=jnp.float64).reshape(n_g)
+           if n_g > 0 else jnp.zeros(0, dtype=jnp.float64))
+    rhs = (jnp.asarray(problem.constraint_rhs, dtype=jnp.float64).reshape(n_g)
+           if n_g > 0 else jnp.zeros(0, dtype=jnp.float64))
+    rho = jnp.array(penalty, dtype=jnp.float64)
+    p_arr = jnp.asarray(p, dtype=jnp.float64)
+
+    # ── Evaluate merit at all candidates via vmap ────────────────────────────
+    def _merit(x: jnp.ndarray) -> jnp.ndarray:
+        f_val = jnp.asarray(problem.objective(x, p_arr)).reshape(())
+        if n_g > 0 and problem.constraints is not None:
+            g_val = problem.constraints(x, p_arr).reshape(n_g)
+        else:
+            g_val = jnp.zeros(0, dtype=jnp.float64)
+        return l1_merit(f_val, g_val, lhs, rhs, rho, n_g)
+
+    merits = jax.vmap(_merit)(candidates)  # (n_candidates,)
+
+    # ── Return the n_select candidates with lowest merit ─────────────────────
+    idx = jnp.argsort(merits)[:n_select]
+    return candidates[idx]  # (n_select, n)
 
 
 def make_batch_solver(
