@@ -117,7 +117,91 @@ print(result_batch.decision_variables.shape)   # (1000, 4)
 print(jnp.mean(result_batch.success))          # ≈ 1.0
 ```
 
-### 3. JAX SQP — lower-level API (used by mycelia)
+### 3. JAX SQP — multi-start and parametric batches with `pmap`
+
+When a batch exceeds what fits on a single accelerator, or when you want genuine
+parallelism across multiple CPU cores / GPUs / TPU chips, use `pmap` rather
+than `vmap`.
+
+* **`vmap`** vectorises the batch inside one device — one XLA program, one
+  device's memory budget. Great for moderate batches on a single GPU.
+* **`pmap`** distributes instances **across devices** (one replica per XLA
+  device). Ideal for multi-start on a multi-core host, multi-GPU parametric
+  sweeps, or TPU pods.
+
+```python
+import jax
+import jax.numpy as jnp
+from septal.jax.sqp import ParametricNLPProblem, SQPConfig
+from septal.jax.sqp.solver import make_batch_solver, batch_state_to_result
+from septal.casadax.utilities import generate_initial_guess
+
+problem = ParametricNLPProblem(
+    objective=lambda x, p: 0.5 * jnp.dot(x, x) - jnp.dot(p, x),
+    bounds=[jnp.full(4, -5.0), jnp.full(4, 5.0)],
+    n_decision=4,
+    n_params=4,
+)
+cfg = SQPConfig()
+
+# --- Multi-start: same parameters, many Sobol-quasi-random x0 -----------
+solve_batch = make_batch_solver(problem, cfg, mode="pmap")
+D = jax.local_device_count()
+
+x0_batch = generate_initial_guess(D, problem.n_decision, problem.bounds)  # (D, n)
+p_fixed  = jnp.array([0.5, -0.3, 0.8, 0.1])
+p_batch  = jnp.broadcast_to(p_fixed, (D, 4))                              # (D, m)
+
+state = solve_batch(x0_batch, p_batch)
+results = batch_state_to_result(state, problem)
+
+# Best start: prefer converged, then min f
+best = jnp.argmin(jnp.where(results.success,
+                            results.objective,
+                            results.objective + 1e10))
+
+# --- Parametric sweep across N >> D: chunk along axis 0 -----------------
+N = 1024
+key = jax.random.PRNGKey(0)
+params_all = jax.random.normal(key, (N, 4))
+x0_all     = jnp.zeros((N, 4))
+
+# Reshape to (N // D, D, ...) and iterate one replicated call per chunk.
+x0_chunks     = x0_all.reshape(N // D, D, 4)
+params_chunks = params_all.reshape(N // D, D, 4)
+states = [solve_batch(x0_chunks[i], params_chunks[i]) for i in range(N // D)]
+
+# Flatten back to (N, ...) along axis 0
+state_all = jax.tree.map(
+    lambda *xs: jnp.concatenate(xs, axis=0), *states
+)
+results_all = batch_state_to_result(state_all, problem)
+```
+
+**Rules of thumb.**
+
+| Situation | Recommended mode |
+|---|---|
+| Batch fits on one GPU / CPU, ≤ few thousand instances | `mode="vmap"` (or `factory.solve_batch`) |
+| Multi-start on multi-core host (`XLA_FLAGS=--xla_force_host_platform_device_count=D`) | `mode="pmap"` |
+| Multi-GPU / TPU parametric sweep, N ≫ D | `mode="pmap"` + chunk `N → (N/D, D, …)` |
+| Inside an outer `jax.pmap` (e.g. mycelia outer loop) | `mode="vmap"` — never nest `pmap` |
+
+**Constraints.**
+
+* `pmap` requires axis-0 length to equal `jax.local_device_count()` exactly
+  (chunk externally for larger batches — see above).
+* `pmap` **cannot** be nested inside another `pmap`. Compose as
+  `pmap(vmap(...))`, not `pmap(pmap(...))`.
+* To simulate `D` CPU devices for development set, **before** importing JAX:
+  ```bash
+  XLA_FLAGS=--xla_force_host_platform_device_count=8 python script.py
+  ```
+* `pmap` replicates the closed-over `problem` and `cfg` to each device on first
+  call — compile-time cost is paid once, then amortised across all subsequent
+  `solve_batch` invocations with the same shapes.
+
+### 4. JAX SQP — lower-level API (used by mycelia)
 
 For live JAX callables (not serialised surrogates), use `make_parametric_nlp` +
 `sqp_solve_single` directly:
@@ -148,7 +232,7 @@ best_idx  = jnp.argmin(jnp.where(converged, f_vals, f_vals + 1e10))
 best_f    = f_vals[best_idx]
 ```
 
-### 4. CasADi / IPOPT
+### 5. CasADi / IPOPT
 
 ```python
 import jax.numpy as jnp
