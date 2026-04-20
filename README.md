@@ -185,7 +185,7 @@ results_all = batch_state_to_result(state_all, problem)
 | Batch fits on one GPU / CPU, ≤ few thousand instances | `mode="vmap"` (or `factory.solve_batch`) |
 | Multi-start on multi-core host (`XLA_FLAGS=--xla_force_host_platform_device_count=D`) | `mode="pmap"` |
 | Multi-GPU / TPU parametric sweep, N ≫ D | `mode="pmap"` + chunk `N → (N/D, D, …)` |
-| Inside an outer `jax.pmap` (e.g. mycelia outer loop) | `mode="vmap"` — never nest `pmap` |
+| Inside an outer `jax.pmap` | `mode="vmap"` — never nest `pmap` |
 
 **Constraints.**
 
@@ -201,38 +201,7 @@ results_all = batch_state_to_result(state_all, problem)
   call — compile-time cost is paid once, then amortised across all subsequent
   `solve_batch` invocations with the same shapes.
 
-### 4. JAX SQP — lower-level API (used by mycelia)
-
-For live JAX callables (not serialised surrogates), use `make_parametric_nlp` +
-`sqp_solve_single` directly:
-
-```python
-import jax
-import jax.numpy as jnp
-from septal.jax.sqp.schema import SQPConfig
-from septal.jax.sqp.solver import sqp_solve_single
-from septal.casadax.utilities import generate_initial_guess
-from mycelia.solvers.constructor import make_parametric_nlp  # or build your own
-
-objective = lambda x: some_classifier(x, param)
-bounds    = [lb, ub]
-n_d       = lb.shape[0]
-
-problem    = make_parametric_nlp(objective, None, bounds, n_d)
-cfg        = SQPConfig(max_iter=500, use_exact_hessian=True)
-x0_batch   = generate_initial_guess(n_starts=8, n_d=n_d, bounds=bounds)
-p_empty    = jnp.zeros(0)
-
-states = [sqp_solve_single(problem, jnp.asarray(x0), p_empty, cfg)
-          for x0 in x0_batch]
-# Pick best: prefer converged, minimise f_val
-f_vals    = jnp.stack([s.f_val for s in states])
-converged = jnp.stack([s.converged for s in states])
-best_idx  = jnp.argmin(jnp.where(converged, f_vals, f_vals + 1e10))
-best_f    = f_vals[best_idx]
-```
-
-### 5. CasADi / IPOPT
+### 4. CasADi / IPOPT
 
 ```python
 import jax.numpy as jnp
@@ -452,7 +421,7 @@ jax.tree.map(lambda new, old: jnp.where(state.converged, old, new), new_state, s
 
 One failure: `hs023` start 1/5 — exterior-of-ellipse feasible set traps the Sobol point. Not a solver defect; multi-start handles this.
 
-Benchmark config (`nlp-bsuite/scripts/benchmark_sqp.py`):
+Benchmark config:
 ```python
 SQPConfig(
     max_iter=1000, admm_n_iter=1000, tol=1e-7,
